@@ -1,0 +1,81 @@
+<form version="1.1" theme="light">
+<label>Smartbus Indexer Balance</label>
+<description>Shows whether Smartbus work is evenly distributed across indexers over time.</description>
+<fieldset submitButton="false" autoRun="true">
+<input type="time" token="field_time">
+<label>Time Range</label>
+<default>
+<earliest>-24h@h</earliest>
+<latest>now</latest>
+</default>
+</input>
+<input type="text" token="queue_filter">
+<label>Queue Name Filter</label>
+<default>*</default>
+</input>
+</fieldset>
+<row>
+<panel>
+<title>Events by Indexer</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" | timechart span=5m sum(event_count) as events by host limit=20 ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">line</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Raw GB by Indexer</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" | eval raw_gb=raw_size_bytes/1024/1024/1024 | timechart span=5m sum(raw_gb) as raw_gb by host limit=20 ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">area</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Indexer Imbalance Percentage</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" | bin _time span=5m | stats sum(event_count) as events by _time host | eventstats avg(events) as avg_events stdev(events) as stdev_events by _time | eval imbalance_pct=if(avg_events>0,round((stdev_events/avg_events)*100,2),0) | timechart span=5m avg(imbalance_pct) as imbalance_pct ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">line</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Indexer Balance Table</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" | stats sum(successful_message_count) as successful_messages sum(failed_message_count) as failed_messages sum(event_count) as events sum(raw_size_bytes) as raw_bytes avg(total_time_ms) as avg_total_ms max(total_time_ms) as max_total_ms by host queue_name name | eval raw_gb=round(raw_bytes/1024/1024/1024,2) | eval avg_total_ms=round(avg_total_ms,2) | eval max_total_ms=round(max_total_ms,2) | fillnull value=0 successful_messages failed_messages events raw_gb avg_total_ms max_total_ms | sort - events ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+<option name="count">25</option>
+</table>
+</panel>
+</row>
+</form>
