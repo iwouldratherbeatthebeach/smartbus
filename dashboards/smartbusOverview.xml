@@ -1,0 +1,237 @@
+<form version="1.1" theme="light">
+<label>Smartbus Observability</label>
+<description>Conservative Smartbus health, value, balance, and delay view. Totals use scoped metric series only to avoid duplicate-counting metrics.log.</description>
+<fieldset submitButton="false" autoRun="true">
+<input type="time" token="field_time">
+<label>Time Range</label>
+<default>
+<earliest>-24h</earliest>
+<latest>now</latest>
+</default>
+</input>
+<input type="text" token="queue_filter">
+<label>Queue Name Filter</label>
+<default>*</default>
+</input>
+<input type="dropdown" token="chart_span">
+<label>Chart Span</label>
+<choice value="1m">1 minute</choice>
+<choice value="5m">5 minutes</choice>
+<choice value="15m">15 minutes</choice>
+<choice value="1h">1 hour</choice>
+<default>5m</default>
+</input>
+</fieldset>
+<row>
+<panel>
+<title>Raw MB Sent Through Smartbus</title>
+<single>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$" | dedup _time host source _raw | stats sum(raw_size_bytes) as raw_bytes | eval raw_mb=round(coalesce(raw_bytes,0)/1024/1024,2) | fields raw_mb ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+</single>
+</panel>
+<panel>
+<title>Events Sent Through Smartbus</title>
+<single>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$" | dedup _time host source _raw | stats sum(event_count) as events | eval events=coalesce(events,0) | fields events ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+</single>
+</panel>
+<panel>
+<title>S3 Datastore Upload MB</title>
+<single>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=ingestor series=upload upload_type=datastore queue_name="$queue_filter$" | dedup _time host source _raw | eval bytes=coalesce(upload_size_bytes,datastore_upload_bytes,0) | stats sum(bytes) as bytes | eval s3_upload_mb=round(coalesce(bytes,0)/1024/1024,2) | fields s3_upload_mb ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+</single>
+</panel>
+<panel>
+<title>Failed Messages</title>
+<single>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" (series=message_thruput OR series=per_message_stats) | dedup _time host source _raw | stats sum(failed_message_count) as failed | eval failed=coalesce(failed,0) | fields failed ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+</single>
+</panel>
+</row>
+<row>
+<panel>
+<title>Raw MB Through Smartbus Over Time</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$" | dedup _time host source _raw | eval raw_mb=raw_size_bytes/1024/1024 | timechart span=$chart_span$ sum(raw_mb) as raw_mb by queue_name limit=20 ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">column</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Smartbus Metric Series Sanity Check</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" | dedup _time host source _raw | stats count as metric_events sum(event_count) as events sum(raw_size_bytes) as raw_bytes sum(encoded_size_bytes) as encoded_bytes sum(upload_size_bytes) as upload_bytes by name series upload_type upload_service queue_name | eval raw_mb=round(coalesce(raw_bytes,0)/1024/1024,2) | eval encoded_mb=round(coalesce(encoded_bytes,0)/1024/1024,2) | eval upload_mb=round(coalesce(upload_bytes,0)/1024/1024,2) | table queue_name name series upload_type upload_service metric_events events raw_mb encoded_mb upload_mb | sort queue_name name series upload_type ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="count">50</option>
+<option name="drilldown">none</option>
+</table>
+</panel>
+</row>
+<row>
+<panel>
+<title>Object Store vs SQS Upload MB</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=ingestor series=upload queue_name="$queue_filter$" | dedup _time host source _raw | eval bytes=coalesce(upload_size_bytes,datastore_upload_bytes,bus_upload_bytes,0) | eval mb=bytes/1024/1024 | eval upload_path=case(upload_type="datastore","S3 datastore",upload_type="bus","SQS bus",isnotnull(upload_service),upload_service,true(),"unknown") | timechart span=$chart_span$ sum(mb) as upload_mb by upload_path limit=10 ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">area</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Indexer Balance: Events Consumed by Host</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=indexer series=per_message_stats queue_name="$queue_filter$" | dedup _time host source _raw | timechart span=$chart_span$ sum(event_count) as events by host limit=30 ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">area</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Indexer Imbalance %</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=indexer series=per_message_stats queue_name="$queue_filter$" | dedup _time host source _raw | bin _time span=$chart_span$ | stats sum(event_count) as events by _time host | eventstats avg(events) as avg_events stdev(events) as stdev_events by _time | eval imbalance_pct=if(avg_events>0,round((stdev_events/avg_events)*100,2),0) | timechart span=$chart_span$ avg(imbalance_pct) as imbalance_pct ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">line</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+<panel>
+<title>Indexer Totals</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=indexer series=per_message_stats queue_name="$queue_filter$" | dedup _time host source _raw | stats sum(event_count) as events sum(raw_size_bytes) as raw_bytes avg(total_time_ms) as avg_total_ms max(total_time_ms) as max_total_ms by host queue_name | eval raw_mb=round(coalesce(raw_bytes,0)/1024/1024,2) | eval avg_total_ms=round(avg_total_ms,2) | table host queue_name events raw_mb avg_total_ms max_total_ms | sort - events ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="count">50</option>
+<option name="drilldown">none</option>
+</table>
+</panel>
+</row>
+<row>
+<panel>
+<title>Average Smartbus Latency Components</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=indexer series=per_message_stats queue_name="$queue_filter$" | dedup _time host source _raw | timechart span=$chart_span$ avg(queue_time_ms) as queue_ms avg(datastore_time_ms) as datastore_ms avg(decoding_time_ms) as decode_ms avg(indexing_time_ms) as indexing_ms avg(total_time_ms) as total_ms ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">line</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Worst Latency by Host and Queue</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus name=indexer series=per_message_stats queue_name="$queue_filter$" | dedup _time host source _raw | stats count as messages sum(event_count) as events avg(total_time_ms) as avg_total_ms max(total_time_ms) as max_total_ms avg(queue_time_ms) as avg_queue_ms avg(datastore_time_ms) as avg_datastore_ms avg(decoding_time_ms) as avg_decode_ms avg(indexing_time_ms) as avg_indexing_ms by host queue_name | foreach *_ms [ eval <<FIELD>>=round(<<FIELD>>,2) ] | sort - max_total_ms ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="count">25</option>
+<option name="drilldown">none</option>
+</table>
+</panel>
+</row>
+<row>
+<panel>
+<title>DLQ and Parsing Errors</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*splunkd.log* ("Successfully sent a SQS DLQ message" OR "Invalid payload_size" OR "Cannot register new_channel" OR "Too many fields" OR "Error parsing events from message content") | eval error_type=case(like(_raw,"%Invalid payload_size%"),"Invalid payload_size",like(_raw,"%Cannot register new_channel%"),"Cannot register new_channel",like(_raw,"%Too many fields%"),"Too many fields",like(_raw,"%Successfully sent a SQS DLQ message%"),"Sent to DLQ",like(_raw,"%Error parsing events from message content%"),"Parse error",true(),"Other") | timechart span=$chart_span$ count by error_type ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">column</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Recent Smartbus Warnings and Errors</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*splunkd.log* (Smartbus OR SQSSmartbus OR RemoteQueue OR remote_queue OR SQS) (ERROR OR WARN OR "Invalid payload_size" OR "Cannot register new_channel" OR "Too many fields" OR DLQ) | table _time host component log_level _raw | sort - _time ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="count">50</option>
+<option name="drilldown">none</option>
+</table>
+</panel>
+</row>
+</form>
