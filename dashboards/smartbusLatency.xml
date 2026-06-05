@@ -1,0 +1,81 @@
+<form version="1.1" theme="light">
+<label>Smartbus Latency and Ingest Delay</label>
+<description>Breaks down Smartbus time spent in SQS, S3, decode, lifecycle, and indexing stages.</description>
+<fieldset submitButton="false" autoRun="true">
+<input type="time" token="field_time">
+<label>Time Range</label>
+<default>
+<earliest>-24h@h</earliest>
+<latest>now</latest>
+</default>
+</input>
+<input type="text" token="queue_filter">
+<label>Queue Name Filter</label>
+<default>*</default>
+</input>
+</fieldset>
+<row>
+<panel>
+<title>Average Pipeline Time by Stage</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" series=per_message_stats | timechart span=5m avg(queue_time_ms) as queue_ms avg(bus_time_ms) as sqs_ms avg(datastore_time_ms) as s3_ms avg(decoding_time_ms) as decode_ms avg(indexing_time_ms) as indexing_ms avg(total_time_ms) as total_ms ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">line</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>P95 Total Message Time by Host</title>
+<chart>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" series=per_message_stats | bin _time span=5m | stats perc95(total_time_ms) as p95_total_ms by _time host | timechart span=5m avg(p95_total_ms) as p95_total_ms by host limit=20 ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="charting.chart">line</option>
+<option name="charting.drilldown">none</option>
+</chart>
+</panel>
+</row>
+<row>
+<panel>
+<title>Worst Latency by Host and Queue</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" series=per_message_stats | stats count as metric_events sum(event_count) as events avg(queue_time_ms) as avg_queue_ms avg(bus_time_ms) as avg_sqs_ms avg(datastore_time_ms) as avg_s3_ms avg(decoding_time_ms) as avg_decode_ms avg(indexing_time_ms) as avg_indexing_ms avg(total_time_ms) as avg_total_ms max(total_time_ms) as max_total_ms by host queue_name | foreach avg_* max_* [ eval <<FIELD>>=round(<<FIELD>>,2) ] | fillnull value=0 events avg_queue_ms avg_sqs_ms avg_s3_ms avg_decode_ms avg_indexing_ms avg_total_ms max_total_ms | sort - max_total_ms ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+<option name="count">25</option>
+</table>
+</panel>
+</row>
+<row>
+<panel>
+<title>Potential Delay Alerts</title>
+<table>
+<search>
+<query>
+<![CDATA[ index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$" series=per_message_stats | stats avg(total_time_ms) as avg_total_ms max(total_time_ms) as max_total_ms sum(event_count) as events by host queue_name | where avg_total_ms > 60000 OR max_total_ms > 300000 | eval avg_total_ms=round(avg_total_ms,2), max_total_ms=round(max_total_ms,2) | sort - max_total_ms ]]>
+</query>
+<earliest>$field_time.earliest$</earliest>
+<latest>$field_time.latest$</latest>
+</search>
+<option name="drilldown">none</option>
+<option name="count">25</option>
+</table>
+</panel>
+</row>
+</form>
