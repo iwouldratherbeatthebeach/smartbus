@@ -1,0 +1,340 @@
+<form version="1.1" theme="dark">
+  <label>Smartbus Operations</label>
+  <description>Smartbus SQS/S3 health, throughput, DLQ, and parser-error dashboard.</description>
+
+  <fieldset submitButton="false">
+    <input type="time" token="time">
+      <label>Time Range</label>
+      <default>
+        <earliest>-60m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+
+    <input type="text" token="queue">
+      <label>Queue Name Filter</label>
+      <default>smartbustesting</default>
+      <initialValue>smartbustesting</initialValue>
+    </input>
+  </fieldset>
+
+  <!-- Health summary -->
+  <row>
+    <panel>
+      <title>Smartbus Successful Messages</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=_internal source=*metrics.log group=smartbus earliest=$time.earliest$ latest=$time.latest$
+(queue_name="$queue$" OR remoteQueueName="$queue$")
+| stats sum(successful_message_count) as successful_messages
+| fillnull value=0 successful_messages
+          ]]></query>
+        </search>
+        <option name="underLabel">successful_message_count</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Smartbus Failed Messages</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=_internal source=*metrics.log group=smartbus earliest=$time.earliest$ latest=$time.latest$
+(queue_name="$queue$" OR remoteQueueName="$queue$")
+| stats sum(failed_message_count) as failed_messages
+| fillnull value=0 failed_messages
+          ]]></query>
+        </search>
+        <option name="underLabel">failed_message_count</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Events Through Smartbus</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=_internal source=*metrics.log group=smartbus earliest=$time.earliest$ latest=$time.latest$
+(queue_name="$queue$" OR remoteQueueName="$queue$")
+| stats sum(event_count) as events
+| fillnull value=0 events
+          ]]></query>
+        </search>
+        <option name="underLabel">event_count</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>DLQ Events</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* earliest=$time.earliest$ latest=$time.latest$
+component=SQSSmartbusInputWorker "Successfully sent a SQS DLQ message to S3"
+| stats count as dlq_events
+          ]]></query>
+        </search>
+        <option name="underLabel">DLQ messages</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Throughput -->
+  <row>
+    <panel>
+      <title>Smartbus Message Throughput Over Time</title>
+      <chart>
+        <search>
+          <query><![CDATA[
+index=_internal source=*metrics.log group=smartbus series=message_thruput earliest=$time.earliest$ latest=$time.latest$
+(queue_name="$queue$" OR remoteQueueName="$queue$")
+| timechart span=1m sum(successful_message_count) as successful_messages sum(failed_message_count) as failed_messages sum(event_count) as events by name
+          ]]></query>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Ingestor metrics -->
+  <row>
+    <panel>
+      <title>Smartbus Output / Ingestor Metrics</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor earliest=$time.earliest$ latest=$time.latest$
+(queue_name="$queue$" OR remoteQueueName="$queue$")
+| stats sum(successful_message_count) as successful_messages
+        sum(failed_message_count) as failed_messages
+        sum(event_count) as events
+        sum(raw_size_bytes) as raw_bytes
+        sum(encoded_size_bytes) as encoded_bytes
+        sum(upload_size_bytes) as upload_bytes
+        avg(total_time_ms) as avg_total_ms
+        avg(encoding_time_ms) as avg_encoding_ms
+        avg(upload_time_ms) as avg_upload_ms
+        by series queue_name queue_type upload_type upload_service splunk_server
+| sort series splunk_server
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Indexer metrics -->
+  <row>
+    <panel>
+      <title>Smartbus Input / Indexer Metrics</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*metrics.log group=smartbus name=indexer earliest=$time.earliest$ latest=$time.latest$
+(queue_name="$queue$" OR remoteQueueName="$queue$")
+| stats sum(successful_message_count) as successful_messages
+        sum(failed_message_count) as failed_messages
+        sum(event_count) as events
+        sum(raw_size_bytes) as raw_bytes
+        sum(decode_size_bytes) as decode_bytes
+        avg(total_time_ms) as avg_total_ms
+        avg(queue_time_ms) as avg_queue_ms
+        avg(decoding_time_ms) as avg_decoding_ms
+        avg(bus_time_ms) as avg_bus_ms
+        avg(datastore_time_ms) as avg_datastore_ms
+        avg(indexing_time_ms) as avg_indexing_ms
+        by series queue_name queue_type splunk_server
+| sort series splunk_server
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Connectivity -->
+  <row>
+    <panel>
+      <title>Remote Queue Connectivity</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* earliest=$time.earliest$ latest=$time.latest$
+("Successfully finished checking connectivity for remote queue" OR "SQS_GetQueueUrlTransaction" OR "remoteQueue=$queue$" OR "remote queue=$queue$")
+| rex field=_raw "remote queue=(?<remote_queue>[^\.\s]+)"
+| rex field=_raw "remoteQueue=(?<remote_queue2>[^\s]+)"
+| eval queue=coalesce(remote_queue, remote_queue2)
+| table _time splunk_server component log_level queue message
+| sort - _time
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Output-worker activity -->
+  <row>
+    <panel>
+      <title>Smartbus Output Worker Activity</title>
+      <event>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* earliest=$time.earliest$ latest=$time.latest$
+(SQSSmartbusOutputWorker OR RemoteQueueOutputWorker OR SmartbusOutputMetrics)
+("Sending event data to object_uri" OR "Sending storage-reference-message" OR "SendMessageTimeout tick" OR "registerWithMetricsManager")
+| table _time splunk_server component log_level message
+| sort - _time
+          ]]></query>
+        </search>
+      </event>
+    </panel>
+  </row>
+
+  <!-- Input-worker activity -->
+  <row>
+    <panel>
+      <title>Smartbus Input Worker Activity</title>
+      <event>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* earliest=$time.earliest$ latest=$time.latest$
+(SQSSmartbusInputWorker OR RemoteQueueInputWorker)
+("Peeked messages" OR "Received event reference from SQS" OR "Finished downloading object" OR "Parsing pdata done" OR "Accounted for committed events" OR "Attempting to delete message")
+| table _time splunk_server component log_level message
+| sort - _time
+          ]]></query>
+        </search>
+      </event>
+    </panel>
+  </row>
+
+  <!-- DLQ activity -->
+  <row>
+    <panel>
+      <title>DLQ Activity Over Time</title>
+      <chart>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* component=SQSSmartbusInputWorker earliest=$time.earliest$ latest=$time.latest$
+"Successfully sent a SQS DLQ message to S3"
+| timechart span=5m count as dlq_messages by splunk_server
+          ]]></query>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>DLQ Message Details</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* component=SQSSmartbusInputWorker earliest=$time.earliest$ latest=$time.latest$
+"Successfully sent a SQS DLQ message to S3"
+| rex field=_raw "location=(?<dlq_location>\S+)"
+| rex field=_raw "message_id=(?<message_id>\S+)"
+| rex field=_raw "size=(?<message_size>\d+)"
+| rex field=_raw "message_type=(?<message_type>.*)$"
+| table _time splunk_server dlq_location message_id message_size message_type message
+| sort - _time
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Parser errors -->
+  <row>
+    <panel>
+      <title>Invalid Payload Size Errors</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* component=SQSSmartbusInputWorker earliest=$time.earliest$ latest=$time.latest$
+"Invalid payload_size="
+| rex field=_raw "message_id=(?<message_id>\S+)"
+| rex field=_raw "Invalid payload_size=(?<payload_size>\d+)"
+| rex field=_raw "bytesRemaining=(?<bytes_remaining>\d+)"
+| stats count latest(_time) as latest values(payload_size) as payload_size values(bytes_remaining) as bytes_remaining by splunk_server message_id
+| convert ctime(latest)
+| sort - latest
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Cannot Register New Channel</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* component=SQSSmartbusInputWorker earliest=$time.earliest$ latest=$time.latest$
+"Cannot register new_channel="
+| rex field=_raw "new_channel=\"source::(?<source>[^|]+)\|host::(?<host>[^|]+)\|sourcetype::(?<sourcetype>[^|]+)\|"
+| stats count latest(_time) as latest by splunk_server source host sourcetype
+| convert ctime(latest)
+| sort - count
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+
+    <panel>
+      <title>Too Many Fields</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* earliest=$time.earliest$ latest=$time.latest$
+"Too many fields. fieldCount="
+| rex field=_raw "fieldCount=(?<fieldCount>\d+).*source::(?<source>[^|]+)\|host::(?<host>[^|]+)\|sourcetype::(?<sourcetype>[^|]+)"
+| stats count max(fieldCount) as max_fieldCount latest(_time) as latest by splunk_server host source sourcetype
+| convert ctime(latest)
+| sort - max_fieldCount
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Blob tracking / large events -->
+  <row>
+    <panel>
+      <title>Large Smartbus Blobs Over 64MB</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* component=SQSSmartbusBlobTracking earliest=$time.earliest$ latest=$time.latest$
+"Sent event data to object_uri=" raw_size>67108864
+| rex field=_raw "object_uri=(?<object_uri>\S+)"
+| rex field=_raw "event_count=(?<event_count>\d+)"
+| rex field=_raw "raw_size=(?<raw_size>\d+)"
+| eval raw_size_mb=round(raw_size/1024/1024,2)
+| table _time splunk_server object_uri event_count raw_size_mb message
+| sort - raw_size_mb
+          ]]></query>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- General Smartbus warnings/errors -->
+  <row>
+    <panel>
+      <title>Smartbus Warnings and Errors</title>
+      <event>
+        <search>
+          <query><![CDATA[
+index=_internal source=*splunkd.log* earliest=$time.earliest$ latest=$time.latest$
+(SQSSmartbusInputWorker OR SQSSmartbusOutputWorker OR RemoteQueueInputWorker OR RemoteQueueOutputWorker OR SQS_Common OR SQS_InputQueue OR SQS_OutputQueue)
+(ERROR OR WARN OR failed OR exception OR timeout OR denied OR DLQ OR "dead letter")
+| table _time splunk_server component log_level message
+| sort - _time
+          ]]></query>
+        </search>
+      </event>
+    </panel>
+  </row>
+</form>
