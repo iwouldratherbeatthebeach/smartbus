@@ -1,0 +1,371 @@
+<form version="1.1" theme="light">
+  <label>Smartbus Value Add</label>
+  <description>Shows Smartbus value using scoped metric series only. This avoids double-counting across multiple Smartbus metric events.</description>
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="time_range">
+      <label>Time Range</label>
+      <default>
+        <earliest>-24h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="queue_filter">
+      <label>Queue Name Filter</label>
+      <default>*</default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>Value Statement</title>
+      <html>
+        <div style="font-size:14px; line-height:1.5;">
+          <b>Smartbus decouples ingest from indexing</b> by placing payloads in object storage
+          and sending lightweight queue references through SQS. This provides buffering,
+          retry capability, and resilience during indexer pressure, network interruption,
+          or downstream ingestion delay.
+          <br/>
+          <br/>
+          This dashboard uses scoped Smartbus metric series only:
+          <code>name=ingestor series=message_thruput</code> for handled ingest volume,
+          <code>name=ingestor series=upload upload_type=datastore</code> for S3/object-store payload offload,
+          and <code>name=ingestor series=upload upload_type=bus</code> for SQS/bus reference traffic.
+        </div>
+      </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Total Events Handled</title>
+      <single>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| stats sum(event_count) as events
+| fillnull value=0 events
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0</option>
+        <option name="underLabel">Events moved through Smartbus</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Raw Ingest Volume Handled</title>
+      <single>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| stats sum(raw_size_bytes) as raw_bytes
+| eval raw_gb=round(raw_bytes/1024/1024/1024,3)
+| fillnull value=0 raw_gb
+| fields raw_gb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.000</option>
+        <option name="underLabel">GB based on message_thruput only</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Success Rate</title>
+      <single>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| stats sum(successful_message_count) as successful sum(failed_message_count) as failed
+| fillnull value=0 successful failed
+| eval total=successful+failed
+| eval success_rate=if(total>0, round((successful/total)*100,2), 100)
+| fields success_rate
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">%</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="underLabel">Successful Smartbus messages</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>S3 / Object Store Payload Offload</title>
+      <single>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=upload upload_type=datastore queue_name="$queue_filter$"
+| stats sum(upload_size_bytes) as s3_upload_bytes
+| eval s3_upload_gb=round(s3_upload_bytes/1024/1024/1024,3)
+| fillnull value=0 s3_upload_gb
+| fields s3_upload_gb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.000</option>
+        <option name="underLabel">GB uploaded to object store</option>
+      </single>
+    </panel>
+    <panel>
+      <title>SQS / Bus Reference Traffic</title>
+      <single>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=upload upload_type=bus queue_name="$queue_filter$"
+| stats sum(upload_size_bytes) as bus_upload_bytes
+| eval bus_upload_mb=round(bus_upload_bytes/1024/1024,3)
+| fillnull value=0 bus_upload_mb
+| fields bus_upload_mb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.000</option>
+        <option name="underLabel">MB of lightweight queue references</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Reference Efficiency</title>
+      <single>
+        <search>
+          <query>index=_internal source=*metrics.log group=smartbus name=ingestor series=upload queue_name="$queue_filter$" upload_type IN ("datastore","bus")
+| stats sum(eval(if(upload_type="datastore", upload_size_bytes, 0))) as s3_upload_bytes
+        sum(eval(if(upload_type="bus", upload_size_bytes, 0))) as bus_upload_bytes
+| fillnull value=0 s3_upload_bytes bus_upload_bytes
+| eval reference_efficiency=if(s3_upload_bytes&gt;0, round((bus_upload_bytes/s3_upload_bytes)*100,4), 0)
+| fields reference_efficiency</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="underLabel">Bus bytes as percent of S3 payload bytes</option>
+        <option name="unit">%</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Events Handled Over Time</title>
+      <chart>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| timechart span=5m sum(event_count) as events
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Events</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Raw GB Handled Over Time</title>
+      <chart>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| eval raw_gb=raw_size_bytes/1024/1024/1024
+| timechart span=5m sum(raw_gb) as raw_gb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Raw GB</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>S3 Payload Offload Over Time</title>
+      <chart>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=upload upload_type=datastore queue_name="$queue_filter$"
+| eval s3_upload_gb=upload_size_bytes/1024/1024/1024
+| timechart span=5m sum(s3_upload_gb) as s3_upload_gb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">S3 Upload GB</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>SQS Reference Traffic Over Time</title>
+      <chart>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=upload upload_type=bus queue_name="$queue_filter$"
+| eval bus_upload_mb=upload_size_bytes/1024/1024
+| timechart span=5m sum(bus_upload_mb) as bus_upload_mb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">SQS / Bus Upload MB</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Successful vs Failed Smartbus Messages</title>
+      <chart>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| timechart span=5m sum(successful_message_count) as successful_messages sum(failed_message_count) as failed_messages
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Messages</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Queue-Level Value Summary</title>
+      <table>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=message_thruput queue_name="$queue_filter$"
+| stats sum(event_count) as events
+        sum(raw_size_bytes) as raw_bytes
+        sum(encoded_size_bytes) as encoded_bytes
+        sum(successful_message_count) as successful_messages
+        sum(failed_message_count) as failed_messages
+        by queue_name queue_type encoding_format
+| eval raw_gb=round(raw_bytes/1024/1024/1024,3)
+| eval encoded_gb=round(encoded_bytes/1024/1024/1024,3)
+| eval total_messages=successful_messages+failed_messages
+| eval success_rate=if(total_messages>0, round((successful_messages/total_messages)*100,2), 100)
+| eval encoded_to_raw_ratio=if(raw_bytes>0, round(encoded_bytes/raw_bytes,3), null())
+| table queue_name queue_type encoding_format events raw_gb encoded_gb encoded_to_raw_ratio successful_messages failed_messages success_rate
+| sort - raw_gb
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Offload Summary by Queue</title>
+      <table>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus name=ingestor series=upload queue_name="$queue_filter$" upload_type IN ("datastore","bus")
+| stats sum(upload_size_bytes) as upload_bytes by queue_name upload_type upload_service
+| eval upload_gb=round(upload_bytes/1024/1024/1024,6)
+| eval upload_mb=round(upload_bytes/1024/1024,3)
+| table queue_name upload_type upload_service upload_mb upload_gb upload_bytes
+| sort queue_name upload_type
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Metric Series Sanity Check</title>
+      <table>
+        <search>
+          <query>
+            <![CDATA[
+index=_internal source=*metrics.log group=smartbus queue_name="$queue_filter$"
+| stats count
+        sum(event_count) as events
+        sum(raw_size_bytes) as raw_bytes
+        sum(encoded_size_bytes) as encoded_bytes
+        sum(upload_size_bytes) as upload_bytes
+        sum(successful_message_count) as successful_messages
+        sum(failed_message_count) as failed_messages
+        by name series upload_type upload_service queue_name
+| eval raw_gb=round(raw_bytes/1024/1024/1024,6)
+| eval encoded_gb=round(encoded_bytes/1024/1024/1024,6)
+| eval upload_gb=round(upload_bytes/1024/1024/1024,6)
+| table name series upload_type upload_service queue_name count events raw_gb encoded_gb upload_gb successful_messages failed_messages
+| sort name series upload_type queue_name
+          ]]>
+          </query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">50</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Do Not Use for Value Math</title>
+      <html>
+        <div style="font-size:13px; line-height:1.5;">
+          Avoid searches like:
+          <pre>index=_internal source=*metrics.log group=smartbus | stats sum(raw_size_bytes)</pre>
+          That can inflate the totals because Smartbus emits multiple metric series for related movement.
+          Use <code>name=ingestor series=message_thruput</code> for handled ingest volume.
+        </div>
+      </html>
+    </panel>
+  </row>
+</form>
